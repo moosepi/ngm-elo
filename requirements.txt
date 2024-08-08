@@ -6,4 +6,4 @@ python-dateutil
 Brotli
 lxml
 certifi
-rookiepy
+curl-cffi

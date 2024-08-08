@@ -1,15 +1,17 @@
 import ssl
 import sys
 import json
+import math
+from collections import deque
 
 import certifi
 import asyncio
 import aiohttp 
 import trueskill
-import rookiepy
 import dateutil.parser as dp
 
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
 
 PROXY_SERVER = '' # get from tsui if necessary
 TEAMSIZE = 4
@@ -25,13 +27,12 @@ trueskill.setup(
 
 INITIAL_SIGMA = 1 # change this to increase/decrease how much more a previously unseen player's rating is likely to swing compared to a regular player
 
-HEADERS = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'DNT': '1',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
-    }
-    
+try:
+    with open('historical_tourcount.json', 'r', encoding='utf-8') as f:
+        HISTORICAL_TOURCOUNT = json.load(f)
+except:
+    HISTORICAL_TOURCOUNT = {}
+
 tzd = {}
 
 def init_timezones():
@@ -100,7 +101,9 @@ def get_players(teamstr, elos, aliases):
         if player in elos:
             players[player] = elos[player]
         else:
-            players[player] = trueskill.Rating(mu=float(rank), sigma=INITIAL_SIGMA)
+            old_tour_count = HISTORICAL_TOURCOUNT.get(player, 0)
+            multiplier = 4 / (2 ** (math.log(min(old_tour_count + 1, 9), 3)))
+            players[player] = trueskill.Rating(mu=float(rank), sigma=INITIAL_SIGMA * multiplier)
             
     return players, rounds_played
     
@@ -134,7 +137,7 @@ async def get_challonge_info(session, url):
     except:
         print(f'cached html for {tour_id} not found, querying challonge...')
         resp = await session.get(url)
-        text = await resp.text()
+        text = resp.text
         with open(f'htmls/{tour_id}.html', 'w', encoding='utf-8') as f:
             f.write(text)
         match_info = await parse_challonge_html(text)
@@ -163,15 +166,11 @@ async def main():
                 tourlist.append(url)
     
     # comment this out if tsui is asleep
-    # only use if having issues w/ cookies
+    # only use if having issues w/ curl-cffi
     # tourlist = [PROXY_SERVER + tour for tour in tourlist]
     elos = {}
     
-    connector = aiohttp.TCPConnector(limit=3)
-    cj = rookiepy.load(['challonge.com'])
-    
-    async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
-        session.cookie_jar.update_cookies({cookie['name']: cookie['value'] for cookie in cj})
+    async with AsyncSession(impersonate='chrome124', max_clients=2) as session:
         try:
             challonges = await asyncio.gather(*[get_challonge_info(session, url) for url in tourlist])
             challonges.sort(key=lambda tour:tour['time'])
@@ -198,6 +197,8 @@ async def main():
                 match_count += 1
                 team1_id = match['player1']['id']
                 team2_id = match['player2']['id']
+                
+                # add teams to tour 
                 if team1_id not in teams:
                     team1, team1_rounds = get_players(match['player1']['display_name'], elos, aliases)
                     teams[team1_id] = team1
@@ -237,6 +238,7 @@ async def main():
                         'draw': 0
                         }
                 
+                # calc rating changes 
                 if not match['winner_id']:
                     draw_count += 1
                     team1 = handle_subs(teams[team1_id], rounds_played, match['round'])
@@ -256,12 +258,13 @@ async def main():
                     teams[loser_id].update(new_ratings[1])
                     elo_history['results'][winner_id]['win'] += 1
                     elo_history['results'][loser_id]['loss'] += 1
+                    
         for team_id, team in teams.items():
             team_dict = elo_history['results'][team_id]
             teamstr = team_dict['teamstr']
             elo_history['teams'][teamstr] = f"{team_dict['win']}W {team_dict['loss']}L {team_dict['draw']}D"
             for player, rating in team.items():
-                elo_history['players'][player] = f"initial elo: {elo_history['players'][player]:.2f}, new elo: {rating.mu:.2f}, rating change: {rating.mu - elo_history['players'][player]:.2f}"
+                elo_history['players'][player] = f"initial elo: {elo_history['players'][player]:.3f}, new elo: {rating.mu:.3f}, rating change: {rating.mu - elo_history['players'][player]:.3f}"
             elos.update(team)
         del elo_history['results']
         elo_history_list.append(elo_history)
@@ -269,7 +272,7 @@ async def main():
     print(rounds_played)
     
     with open('elos.json', 'w', encoding='utf-8') as f:
-        elos_print = {player: round(rating.mu, 2) for player, rating in sorted(elos.items(), key=lambda elo: elo[1], reverse=True)}
+        elos_print = {player: round(rating.mu, 3) for player, rating in sorted(elos.items(), key=lambda elo: elo[1], reverse=True)}
         json.dump(elos_print, f, indent='\t')
     
     with open('elo_history.json', 'w', encoding='utf-8') as f:

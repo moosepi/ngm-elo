@@ -8,8 +8,7 @@ ELO calculation + balance scripts for NGMC
 
 1. (FIRST TIME ONLY) install python if you hadn't already and `pip install -r requirements.txt`, or run the provided `setup.bat` file
 2. put ALL tours that you want to count towards elo in `tourlist.txt`.
-3. open challonge in your browser
-4. run the script 
+3. run the script 
 
 ### NGMbalance_v3.5 
 
@@ -39,6 +38,7 @@ ELO calculation + balance scripts for NGMC
 		- `aliases.txt` -- tab-separated player aliases for merging. every alias on a line is assumed to be the same player, first name on each line  is the player's primary alias used for printing etc. NOT SUPPORTED: handling for different players using the same alias at some point. please flame anyone you see trying to do this.
 		- `tourlist.txt` -- list of challonge IDs (URL ID, so the bit after the slash at the end, not API-internal ID) to use.
 			- `htmls/{tour_id}.html` -- for each id in the above txt, this folder will get checked; attempts to query challonge only if no suitable saved html is found 
+		- `historical_tourcount.json` -- dict of how many tours each player played in the ~2 months prior to starting elo calculation. used for determining initial uncertainty interval (i.e. new player multiplier)
 	- output:
 		- `elos.json` -- simple sorted dict of playername: skill rating val. used for balancing
 		- `elo_adjusted_tl.txt` -- integer tierlist in the same format as before. for legacy purposes (?)
